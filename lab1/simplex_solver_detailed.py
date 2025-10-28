@@ -36,6 +36,10 @@ class DetailedSimplexSolver:
         self.all_var_names = []
         self.num_original_vars = 0
         self.basis = []
+        
+        # Неограниченные переменные (могут быть < 0)
+        self.unrestricted_vars = set()
+        self.var_mapping = {}
 
         self.tableau = None
 
@@ -99,6 +103,20 @@ class DetailedSimplexSolver:
                 for line in lines[2:]:
                     line = line.strip()
                     if not line:
+                        continue
+                    
+                    # Проверка на строку unrestricted
+                    if line.lower().startswith('unrestricted'):
+                        parts = line.split()[1:]
+                        if parts and parts[0].lower() == 'all':
+                            self.unrestricted_vars = set(range(self.num_original_vars))
+                            self.print_info(f"ВСЕ переменные могут быть отрицательными")
+                        else:
+                            for var_num_str in parts:
+                                var_idx = int(var_num_str) - 1
+                                self.unrestricted_vars.add(var_idx)
+                            var_list = ', '.join([f'x{i+1}' for i in sorted(self.unrestricted_vars)])
+                            self.print_info(f"Неограниченные переменные: {var_list}")
                         continue
 
                     parts = re.split(r'\s*([<=>]=?)\s*', line)
@@ -262,6 +280,45 @@ class DetailedSimplexSolver:
         self.print_canonical_form()
         
         self.print_header("ЭТАП 2: ФОРМИРОВАНИЕ НАЧАЛЬНОЙ СИМПЛЕКС-ТАБЛИЦЫ", 1)
+
+        # Шаг 0: Замена неограниченных переменных
+        if self.unrestricted_vars:
+            self.print_header(f"Замена неограниченных переменных", 3)
+            self.print_info(f"Обрабатываем {len(self.unrestricted_vars)} неограниченных переменных")
+            
+            new_obj_coeffs = []
+            new_constraint_coeffs = [[] for _ in range(len(self.constraint_coeffs))]
+            new_var_names = []
+            
+            for var_idx in range(self.num_original_vars):
+                if var_idx in self.unrestricted_vars:
+                    old_coeff = self.objective_coeffs[var_idx]
+                    new_obj_coeffs.append(old_coeff)
+                    new_obj_coeffs.append(-old_coeff)
+                    
+                    plus_idx = len(new_var_names)
+                    new_var_names.append(f'{self.var_names[var_idx]}+')
+                    new_var_names.append(f'{self.var_names[var_idx]}-')
+                    self.var_mapping[var_idx] = (plus_idx, plus_idx + 1)
+                    
+                    for constr_idx in range(len(self.constraint_coeffs)):
+                        old_constr_coeff = self.constraint_coeffs[constr_idx][var_idx]
+                        new_constraint_coeffs[constr_idx].append(old_constr_coeff)
+                        new_constraint_coeffs[constr_idx].append(-old_constr_coeff)
+                    
+                    print(f"  {Fore.CYAN}{self.var_names[var_idx]} = {self.var_names[var_idx]}+ - {self.var_names[var_idx]}-{Style.RESET_ALL}")
+                else:
+                    new_obj_coeffs.append(self.objective_coeffs[var_idx])
+                    self.var_mapping[var_idx] = (len(new_var_names), None)
+                    new_var_names.append(self.var_names[var_idx])
+                    
+                    for constr_idx in range(len(self.constraint_coeffs)):
+                        new_constraint_coeffs[constr_idx].append(self.constraint_coeffs[constr_idx][var_idx])
+            
+            self.objective_coeffs = np.array(new_obj_coeffs)
+            self.constraint_coeffs = [np.array(row) for row in new_constraint_coeffs]
+            self.var_names = new_var_names
+            self.num_original_vars = len(self.var_names)
 
         num_constraints = len(self.constraint_coeffs)
         self.all_var_names = list(self.var_names)

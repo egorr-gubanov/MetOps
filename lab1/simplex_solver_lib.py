@@ -15,6 +15,7 @@ class LinprogSolver:
         self.constraint_coeffs = []
         self.constraint_types = []
         self.constraint_rhs = []
+        self.unrestricted_vars = set()
         
         self.parse_file(file_path)
         
@@ -29,10 +30,22 @@ class LinprogSolver:
                     raise ValueError("Неверный тип задачи (ожидается 'maximize' или 'minimize')")
 
                 self.objective_coeffs = np.array([float(c) for c in lines[1].strip().split()])
+                num_original_vars = len(self.objective_coeffs)
 
                 for line in lines[2:]:
                     line = line.strip()
                     if not line:
+                        continue
+                    
+                    # Проверка на строку unrestricted
+                    if line.lower().startswith('unrestricted'):
+                        parts = line.split()[1:]
+                        if parts and parts[0].lower() == 'all':
+                            self.unrestricted_vars = set(range(num_original_vars))
+                        else:
+                            for var_num_str in parts:
+                                var_idx = int(var_num_str) - 1
+                                self.unrestricted_vars.add(var_idx)
                         continue
 
                     parts = re.split(r'\s*([<=>]=?)\s*', line)
@@ -104,7 +117,13 @@ class LinprogSolver:
             b_eq = None
         
         # Решение задачи
-        bounds = [(0, None) for _ in range(num_vars)]
+        # Установка границ: unrestricted переменные могут быть любого знака
+        bounds = []
+        for i in range(num_vars):
+            if i in self.unrestricted_vars:
+                bounds.append((None, None))  # Без ограничений
+            else:
+                bounds.append((0, None))  # x_i >= 0
         
         result = linprog(
             c=c,
