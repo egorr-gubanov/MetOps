@@ -24,6 +24,10 @@ class SimplexSolver:
         self.all_var_names = []
         self.num_original_vars = 0
         self.basis = []
+        
+        # Неограниченные переменные (могут быть < 0)
+        self.unrestricted_vars = set()  # индексы переменных (0-based)
+        self.var_mapping = {}  # отображение: старый индекс -> (индекс x+, индекс x-)
 
         self.tableau = None
 
@@ -48,6 +52,7 @@ class SimplexSolver:
         - Что мы делаем: максимизируем или минимизируем?
         - Коэффициенты целевой функции (числа, которые мы умножаем на переменные)
         - Все ограничения (условия, которые должны выполняться)
+        - Какие переменные могут быть отрицательными (unrestricted)
         
         ПРОСТЫМИ СЛОВАМИ: Берёт файл и превращает текст в числа, с которыми можно работать.
         """
@@ -66,6 +71,24 @@ class SimplexSolver:
                 for line in lines[2:]:
                     line = line.strip()
                     if not line:
+                        continue
+                    
+                    # Проверка на строку unrestricted
+                    if line.lower().startswith('unrestricted'):
+                        parts = line.split()[1:]  # убираем слово "unrestricted"
+                        if parts and parts[0].lower() == 'all':
+                            # Все переменные неограниченные
+                            self.unrestricted_vars = set(range(self.num_original_vars))
+                            if self.verbose:
+                                print(f"  [Парсинг]: ВСЕ переменные могут быть отрицательными")
+                        else:
+                            # Конкретные переменные (номера 1-based)
+                            for var_num_str in parts:
+                                var_idx = int(var_num_str) - 1  # переводим в 0-based
+                                self.unrestricted_vars.add(var_idx)
+                            if self.verbose:
+                                var_list = ', '.join([f'x{i+1}' for i in sorted(self.unrestricted_vars)])
+                                print(f"  [Парсинг]: Неограниченные переменные: {var_list}")
                         continue
 
                     parts = re.split(r'\s*([<=>]=?)\s*', line)
@@ -96,18 +119,66 @@ class SimplexSolver:
         ЧТО ДЕЛАЕТ: Готовит большую таблицу для решения задачи. Это самая важная подготовка!
         
         Шаги:
-        1. Если была задача "максимизировать", превращаем её в "минимизировать" (умножаем на -1)
-        2. Добавляем дополнительные переменные к ограничениям:
+        1. Заменяем неограниченные переменные на разность двух неотрицательных: x = x+ - x-
+        2. Если была задача "максимизировать", превращаем её в "минимизировать" (умножаем на -1)
+        3. Добавляем дополнительные переменные к ограничениям:
            - Для "<=" добавляем "slack" переменные (s1, s2, ...) - это как "запас"
            - Для ">=" добавляем "surplus" (e1, e2, ...) и "artificial" (a1, a2, ...) переменные
            - Для "=" добавляем только "artificial" переменные
-        3. Строим большую таблицу со всеми числами
-        4. Добавляем строку W (вспомогательная функция) если нужно
+        4. Строим большую таблицу со всеми числами
+        5. Добавляем строку W (вспомогательная функция) если нужно
         
         ПРОСТЫМИ СЛОВАМИ: Превращаем задачу в специальную таблицу, с которой умеет работать алгоритм.
         """
         if self.verbose:
             print("[ЭТАП 2 и 3: Приведение к каноническому виду и Формирование вспомогательной задачи (Фаза 1)]")
+
+        # Шаг 0: Замена неограниченных переменных
+        if self.unrestricted_vars:
+            if self.verbose:
+                print(f"  [Замена переменных]: Обработка {len(self.unrestricted_vars)} неограниченных переменных")
+            
+            # Новые коэффициенты для целевой функции
+            new_obj_coeffs = []
+            # Новые коэффициенты для ограничений
+            new_constraint_coeffs = [[] for _ in range(len(self.constraint_coeffs))]
+            # Новые имена переменных
+            new_var_names = []
+            
+            for var_idx in range(self.num_original_vars):
+                if var_idx in self.unrestricted_vars:
+                    # x_i = x_i+ - x_i-
+                    old_coeff = self.objective_coeffs[var_idx]
+                    new_obj_coeffs.append(old_coeff)   # коэффициент для x+
+                    new_obj_coeffs.append(-old_coeff)  # коэффициент для x-
+                    
+                    plus_idx = len(new_var_names)
+                    new_var_names.append(f'{self.var_names[var_idx]}+')
+                    new_var_names.append(f'{self.var_names[var_idx]}-')
+                    self.var_mapping[var_idx] = (plus_idx, plus_idx + 1)
+                    
+                    # Обновляем ограничения
+                    for constr_idx in range(len(self.constraint_coeffs)):
+                        old_constr_coeff = self.constraint_coeffs[constr_idx][var_idx]
+                        new_constraint_coeffs[constr_idx].append(old_constr_coeff)   # для x+
+                        new_constraint_coeffs[constr_idx].append(-old_constr_coeff)  # для x-
+                    
+                    if self.verbose:
+                        print(f"    {self.var_names[var_idx]} = {self.var_names[var_idx]}+ - {self.var_names[var_idx]}-")
+                else:
+                    # Обычная переменная (x_i >= 0)
+                    new_obj_coeffs.append(self.objective_coeffs[var_idx])
+                    self.var_mapping[var_idx] = (len(new_var_names), None)
+                    new_var_names.append(self.var_names[var_idx])
+                    
+                    for constr_idx in range(len(self.constraint_coeffs)):
+                        new_constraint_coeffs[constr_idx].append(self.constraint_coeffs[constr_idx][var_idx])
+            
+            # Обновляем данные
+            self.objective_coeffs = np.array(new_obj_coeffs)
+            self.constraint_coeffs = [np.array(row) for row in new_constraint_coeffs]
+            self.var_names = new_var_names
+            self.num_original_vars = len(self.var_names)
 
         num_constraints = len(self.constraint_coeffs)
         self.all_var_names = list(self.var_names)
@@ -458,8 +529,38 @@ class SimplexSolver:
                 var_name = self.all_var_names[basis_col_idx]
                 solution[var_name] = self.tableau[i, rhs_col]
 
-        for var_name, value in solution.items():
-            print(f"{var_name} = {value:.2f}")
+        # Если были неограниченные переменные, восстанавливаем их исходные значения
+        if self.unrestricted_vars:
+            original_solution = {}
+            # Читаем из self.__init__ сохраненные оригинальные имена
+            original_num_vars = len(self.var_mapping)
+            
+            for orig_idx in range(original_num_vars):
+                mapping = self.var_mapping.get(orig_idx)
+                if mapping:
+                    plus_idx, minus_idx = mapping
+                    if minus_idx is not None:
+                        # Неограниченная переменная: x = x+ - x-
+                        plus_name = self.var_names[plus_idx]
+                        minus_name = self.var_names[minus_idx]
+                        x_plus = solution.get(plus_name, 0.0)
+                        x_minus = solution.get(minus_name, 0.0)
+                        # Восстанавливаем оригинальное имя (удаляем '+' из имени)
+                        orig_name = plus_name[:-1]  # убираем '+'
+                        original_solution[orig_name] = x_plus - x_minus
+                    else:
+                        # Обычная переменная
+                        var_name = self.var_names[plus_idx]
+                        original_solution[var_name] = solution.get(var_name, 0.0)
+            
+            # Выводим оригинальные значения
+            for var_name in sorted(original_solution.keys(), key=lambda x: int(x[1:]) if x[1:].isdigit() else x):
+                value = original_solution[var_name]
+                print(f"{var_name} = {value:.2f}")
+        else:
+            # Обычный вывод
+            for var_name, value in solution.items():
+                print(f"{var_name} = {value:.2f}")
 
         final_z_value = self.tableau[-1, -1]
 
