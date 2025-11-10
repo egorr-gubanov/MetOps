@@ -3,3 +3,4 @@ minimize
 1 1 0 2 <= 8
 0 1 1 1 = 6
 2 0 1 0 >= 2
+unrestricted all
