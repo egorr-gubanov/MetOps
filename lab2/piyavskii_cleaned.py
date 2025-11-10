@@ -1,4 +1,9 @@
 import numpy as np
+import matplotlib
+import os
+# Используем неинтерактивный бэкенд только если переменная окружения установлена
+if os.getenv('DISPLAY') is None and os.getenv('MPLBACKEND') is None:
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import math
 import time
@@ -191,19 +196,42 @@ def plot_results(
 
     if save_path:
         fig.savefig(save_path, bbox_inches='tight')
-    plt.show()
+    # Показываем график только если есть дисплей (не в режиме Agg)
+    if matplotlib.get_backend() != 'Agg':
+        try:
+            plt.show(block=False)
+            plt.pause(0.1)
+        except:
+            pass
     return fig
 
 
 def save_report(pdf_path: str, fig_list: List[plt.Figure], summary_text: str):
+    """
+    Сохраняет графики и текстовую сводку в PDF-файл.
+    
+    Структура PDF-отчета:
+    1. График для первой функции (тестовая функция)
+    2. График для второй функции (Растригина)
+    3. График для третьей функции (Экли)
+    4. Текстовая страница с числовыми результатами всех тестов
+    """
     with PdfPages(pdf_path) as pdf:
-        for fig in fig_list:
+        # Сохраняем все графики
+        for i, fig in enumerate(fig_list, 1):
             pdf.savefig(fig)
-        fig_text = plt.figure(figsize=(8.27, 11.69))
+            print(f"  Страница {i}: График функции {i}")
+        
+        # Создаем текстовую страницу с результатами
+        fig_text = plt.figure(figsize=(8.27, 11.69))  # A4 формат
         fig_text.clf()
-        fig_text.text(0.01, 0.99, "Результаты расчёта", fontsize=14, weight='bold')
-        fig_text.text(0.01, 0.95, summary_text, fontsize=10)
+        fig_text.text(0.1, 0.98, "РЕЗУЛЬТАТЫ РАСЧЁТА", fontsize=16, weight='bold', 
+                     horizontalalignment='left', verticalalignment='top')
+        fig_text.text(0.1, 0.92, summary_text, fontsize=11, 
+                     horizontalalignment='left', verticalalignment='top',
+                     family='monospace')
         pdf.savefig(fig_text)
+        print(f"  Страница {len(fig_list) + 1}: Текстовая сводка результатов")
         plt.close('all')
 
 
@@ -211,7 +239,117 @@ def save_report(pdf_path: str, fig_list: List[plt.Figure], summary_text: str):
 # Демонстрации (примерные функции с несколькими локальными минимумами)
 # ==========================
 
+# Словарь с доступными тестовыми функциями
+TEST_FUNCTIONS = {
+    1: {
+        "name": "Тестовая функция",
+        "func": "(x-2)**2 + 5*sin(pi*x)",
+        "a": 0.0,
+        "b": 6.0,
+        "description": "Функция с несколькими локальными минимумами"
+    },
+    2: {
+        "name": "Растригина (Rastrigin)",
+        "func": "10 + (x**2 - 10*cos(2*pi*x))",
+        "a": -5.12,
+        "b": 5.12,
+        "description": "Классическая тестовая функция с множеством локальных минимумов"
+    },
+    3: {
+        "name": "Экли (Ackley)",
+        "func": "-20*exp(-0.2*sqrt(x**2)) - exp(0.5*(cos(2*pi*x) + 1)) + 20 + e",
+        "a": -5.0,
+        "b": 5.0,
+        "description": "Функция с почти плоским внешним регионом и большим отверстием в центре"
+    },
+    4: {
+        "name": "Гриванка (Griewank)",
+        "func": "1 + (x**2)/4000 - cos(x)",
+        "a": -10.0,
+        "b": 10.0,
+        "description": "Функция с множеством регулярно распределенных локальных минимумов"
+    },
+    5: {
+        "name": "Розенброка 1D (Rosenbrock)",
+        "func": "(1-x)**2 + 100*(x**2-x)**2",
+        "a": -2.0,
+        "b": 2.0,
+        "description": "Функция с узкой долиной, ведущей к глобальному минимуму"
+    },
+    6: {
+        "name": "Многоэкстремальная функция",
+        "func": "x**2 + 10*sin(2*pi*x) + 5*cos(3*pi*x)",
+        "a": -3.0,
+        "b": 3.0,
+        "description": "Функция с множеством локальных экстремумов"
+    },
+    7: {
+        "name": "Функция Химмельблау 1D",
+        "func": "(x**2 + x - 11)**2 + (x + x**2 - 7)**2",
+        "a": -5.0,
+        "b": 5.0,
+        "description": "Многоэкстремальная функция с несколькими локальными минимумами"
+    }
+}
+
+
+def solve_single_function(func_num: int, eps: float = 0.01, save_pdf: bool = False):
+    """
+    Решает задачу оптимизации для одной функции.
+    
+    Args:
+        func_num: номер функции из словаря TEST_FUNCTIONS
+        eps: точность вычисления
+        save_pdf: сохранять ли график в PDF
+    """
+    if func_num not in TEST_FUNCTIONS:
+        print(f"Ошибка: функция с номером {func_num} не найдена!")
+        print(f"Доступные номера: {list(TEST_FUNCTIONS.keys())}")
+        return
+    
+    func_info = TEST_FUNCTIONS[func_num]
+    print(f"\n{'='*60}")
+    print(f"Функция {func_num}: {func_info['name']}")
+    print(f"Описание: {func_info['description']}")
+    print(f"Формула: f(x) = {func_info['func']}")
+    print(f"Отрезок: [{func_info['a']}, {func_info['b']}]")
+    print(f"Точность: eps = {eps}")
+    print(f"{'='*60}\n")
+    
+    f = parse_function(func_info['func'])
+    a, b = func_info['a'], func_info['b']
+    
+    print("Выполняется оптимизация...")
+    start_time = time.time()
+    x_min, y_min, iters, ttime, history, L_used = piyavskii_method(f, a, b, L=None, eps=eps)
+    total_time = time.time() - start_time
+    
+    print(f"\n{'='*60}")
+    print("РЕЗУЛЬТАТЫ:")
+    print(f"{'='*60}")
+    print(f"Найденный минимум:")
+    print(f"  x_min = {x_min:.8f}")
+    print(f"  f(x_min) = {y_min:.8f}")
+    print(f"\nПараметры алгоритма:")
+    print(f"  Константа Липшица L = {L_used:.6f}")
+    print(f"  Количество итераций = {iters}")
+    print(f"  Время вычисления = {ttime:.6f} сек")
+    print(f"  Общее время (с визуализацией) = {total_time:.6f} сек")
+    print(f"{'='*60}\n")
+    
+    save_path = f"result_function_{func_num}.pdf" if save_pdf else None
+    fig = plot_results(f, a, b, L_used, history, x_min, y_min, 
+                      title=f"{func_info['name']}: {func_info['func']}", 
+                      save_path=save_path)
+    
+    if save_pdf:
+        print(f"График сохранён в {save_path}\n")
+    
+    return x_min, y_min, iters, ttime, L_used
+
+
 def demo_examples():
+    """Запускает все демонстрационные примеры и создает общий PDF-отчет."""
     demos = []
 
     func_str = "(x-2)**2 + 5*sin(pi*x)"
@@ -242,9 +380,73 @@ def demo_examples():
     pdf_path = "piyavskii_report.pdf"
     figs = [d[0] for d in demos]
     summaries = "\n\n".join(d[1] for d in demos)
+    
+    print("\n" + "="*60)
+    print("Создание PDF-отчета...")
+    print("="*60)
     save_report(pdf_path, figs, summaries)
-    print(f"Отчёт сохранён в {pdf_path}")
+    print("="*60)
+    print(f"✓ Отчёт сохранён в {pdf_path}")
+    print(f"\nСтруктура отчета:")
+    print(f"  - Страница 1: График тестовой функции (x-2)² + 5*sin(π*x)")
+    print(f"  - Страница 2: График функции Растригина")
+    print(f"  - Страница 3: График функции Экли (Ackley)")
+    print(f"  - Страница 4: Текстовая сводка с числовыми результатами")
+    print(f"\nКаждый график содержит:")
+    print(f"  • Синяя линия - исходная функция f(x)")
+    print(f"  • Пунктирная линия - итоговая ломаная нижней оценки")
+    print(f"  • Красные точки - все точки, где вычислялась функция")
+    print(f"  • Звёздочка - найденный глобальный минимум")
+    print("="*60 + "\n")
+
+
+def print_menu():
+    """Выводит меню выбора функции."""
+    print("\n" + "="*60)
+    print("МЕТОД ПИЯВСКОГО - Выбор тестовой функции")
+    print("="*60)
+    print("\nДоступные функции:")
+    for num, info in TEST_FUNCTIONS.items():
+        print(f"  {num}. {info['name']}")
+        print(f"     {info['description']}")
+        print(f"     f(x) = {info['func']}")
+        print(f"     Отрезок: [{info['a']}, {info['b']}]")
+        print()
+    print("  0. Запустить все функции и создать общий PDF-отчет")
+    print("="*60)
 
 
 if __name__ == '__main__':
-    demo_examples()
+    import sys
+    
+    if len(sys.argv) > 1:
+        # Если передан аргумент командной строки
+        try:
+            choice = int(sys.argv[1])
+            if choice == 0:
+                demo_examples()
+            elif choice in TEST_FUNCTIONS:
+                solve_single_function(choice, eps=0.01, save_pdf=True)
+            else:
+                print(f"Ошибка: неверный номер функции. Доступны: {list(TEST_FUNCTIONS.keys())} или 0")
+        except ValueError:
+            print("Ошибка: номер функции должен быть числом")
+    else:
+        # Интерактивный режим
+        print_menu()
+        try:
+            choice = input("Выберите номер функции (или 0 для всех): ").strip()
+            choice = int(choice)
+            
+            if choice == 0:
+                demo_examples()
+            elif choice in TEST_FUNCTIONS:
+                solve_single_function(choice, eps=0.01, save_pdf=True)
+            else:
+                print(f"Ошибка: неверный номер. Доступны: {list(TEST_FUNCTIONS.keys())} или 0")
+        except ValueError:
+            print("Ошибка: введите число")
+        except KeyboardInterrupt:
+            print("\n\nПрервано пользователем")
+        except Exception as e:
+            print(f"Ошибка: {e}")
