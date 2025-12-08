@@ -1,0 +1,4 @@
+stage,delta_cb1,delta_cb2,delta_dep,expected_value
+1,75.0,0.0,200.0,0.0
+2,0.0,0.0,0.0,0.0
+3,0.0,0.0,0.0,0.0
